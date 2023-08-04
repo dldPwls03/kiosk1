@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-
+const ObjectId = mongoose.Types.ObjectId;
 const postsSchema = new mongoose.Schema({
   user: {
     type: String,

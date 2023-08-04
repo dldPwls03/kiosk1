@@ -3,6 +3,7 @@ const router = express.Router();
 const Comment = require("../schemas/comment");
 const Post = require("../schemas/post");
 const mongoose = require("mongoose");
+const auth = require('../middlewares/auth');
 
 // 댓글 작성
 router.post("/:_postId", async (req, res) => {
