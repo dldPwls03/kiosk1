@@ -1,96 +1,149 @@
-const express = require('express');
+const express = require("express");
+// Op: sequelize 안의 op라는 모듈을 가져다 쓰려고 함
+const { Op } = require("sequelize");
+const { Posts, Users, Comments } = require("../models");
+const authMiddleware = require("../middlewares/auth-middleware");
 const router = express.Router();
-const { Comments } = require('../models');
-const auth = require('../middlewares/auth-middleware');
 
-
-router.route('/:postId')
-  .get(auth, async (req, res) => {
-    const postId = req.params.postId;
-
-    const comments = await Comments.findAll({ 
-      where: { postId: postId },
-      order:[['createdAt','DESC']] 
-    })
-    if (comments.length) {
-      const data = comments.map((comments) => {
-        return {
-          commentId: comments.commentId,
-          commenter: comments.commenter,
-          content: comments.content,
-          createdAt: comments.createdAt,
-          postId: comments.PostId
+// 댓글 생성 api
+router.post("/posts/:postId/comments", authMiddleware, async (req, res) => {
+    try {
+        const { content } = req.body;
+        const { postId } = req.params;
+        const { userId } = res.locals.user;
+        const post = await Posts.findOne({ where: { postId } }); // params로 받아온 postId를 기준으로 게시물의 존재 여부를 확인
+        if (!content) {
+            return res.status(400).json({ errorMessage: '댓글을 입력해주세요.' });
         }
-      })
-      res.json({ data: data })
-    } else {
-      res.json({ message: "댓글이 없습니다." })
-    }
 
-  })
-  .post(auth, (req, res) => {
-    const PostId = req.params.postId;
-    const { commenter, password, content } = req.body;
-    const UserId = res.locals.user.userId;
-    if (!content) {
-      res.json({ errorMessage: "댓글 내용을 입력해주세요." })
-    } else {
-      Comments.create({ PostId, commenter, UserId, password, content });
-      res.json({ message: '댓글이 작성되었습니다.' })
-    }
-  })
-
-router.route('/:commentId')
-  .put(auth, async (req, res) => {
-    const commentId = req.params.commentId;
-    const { commenter, password, content } = req.body;
-    const { userId } = res.locals.user;
-    if (!content) {
-      res.status(400).json({ errorMessage: "댓글 내용을 입력해주세요." })
-    } else {
-      const comment = await Comments.findOne({ where: { commentId } });
-      if (comment) {
-        if (userId !== comment.UserId) return res.status(400).json({ errorMessage: "권한이 없습니다." })
-        else if (comment.password === password) {
-          await Comments.update({ commenter: commenter, content: content },
-            {
-              where: {
-                commentId: commentId
-              }
-            });
-          res.json({ Message: "수정이 완료되었습니다." });
-        } else {
-          res.status(400).json({ errorMessage: "비밀번호가 다릅니다." });
-        };
-      } else {
-        res.status(400).json({ errorMessage: "존재하지 않는 댓글입니다." })
-      };
-
-    }
-  })
-  .delete(auth, async (req, res) => {
-    const commentId = req.params.commentId;
-    const password = req.body.password;
-    const { userId } = res.locals.user;
-
-    const comment = await Comments.findOne({where: {commentId}});
-    if (comment) {
-      if (userId !== comment.UserId) return res.status(400).json({ errorMessage: "권한이 없습니다." })
-      else if (comment.password === password) {
-        await Comments.destroy({
-          where: {
-            commentId: commentId
-          }
+        if (!post) {
+            return res.status(404).json({ errorMessage: '어라? 게시물이 없네요?' });
+        }
+        await Comments.create({
+            UserId: userId,
+            PostId: postId,
+            content
         })
-        res.json({ message: "댓글이 삭제되었습니다." })
-      } else {
-        res.status(404).json({ errorMessage: "비밀번호가 다릅니다." })
-      }
-    } else {
-      res.status(400).json({ errorMessage: "존재하지 않는 댓글입니다." })
+        res.status(200).json({ message: '얍! 댓글이 생성되었어요!' });
+
+    } catch (error) {
+        res.status(500).json({ errorMessage: '댓글 생성에 실패했습니다.' });
     }
+})
 
-  })
+// 댓글 목록 조회 api
+router.get("/posts/:postId/comments", authMiddleware, async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const post = await Posts.findOne({ where: { postId } });
+        const comments = await Comments.findAll({
+            where: { postId },
+            include: { model: Users, attributes: ["nickname"] },
+            attributes: ["commentId", "content", "createdAt", "updatedAt"],
+            order: [["createdAt", "desc"]]
+        })
 
+        // 게시글의 존재 여부를 확인합니다.
+        if (!post) {
+            return res
+                .status(404)
+                .json({ errorMessage: '게시글이 존재하지 않습니다.' });
+        }
+        // 댓글의 존재 여부를 확인합니다.
+        if (!comments.length) {
+            return res
+                .status(404)
+                .json({ errorMessage: '댓글이 존재하지 않습니다.' });
+        }
+        // 데이터 형식 수정..
+        const editComments = comments.map((comment) => ({
+            commentId: comment.commentId,
+            nickname: comment.User.nickname,
+            content: comment.content,
+            createdAt: comment.createdAt,
+            updatedAt: comment.updatedAt,
+        }));
+        res.status(200).json({ data: editComments });
+    } catch (error) {
+        res.status(500).json({ errorMessage: '댓글 조회에 실패했습니다.' });
+    }
+})
+
+// 댓글 수정 api
+router.put('/posts/:postId/comments/:commentId', authMiddleware, async (req, res) => { //URL의 파라미터로부터 _postId와 _commentId를 추출합니다. 
+    try {
+        const { userId } = res.locals.user;
+        const { postId, commentId } = req.params;
+        const { content } = req.body;
+        const post = await Posts.findOne({ where: { postId } });
+        //Posts 모델에서 _id가 _postId와 일치하는 게시글을 찾습니다.
+        //findOne 메소드는 단일 문서를 반환하므로 [post]로 결과를 배열 디스트럭처링합니다
+        if (!post) {
+            return res
+                .status(404)
+                .json({ errorMessage: '게시글 조회에 실패하였습니다.' });
+        }        //게시글이 존재하지 않는 경우 404 상태코드와 함께 실패 메시지를 반환합니다.
+        const comment = await Comments.findOne({ where: { commentId } });
+        //Comments 모델에서 _id가 _commentId와 일치하는 댓글을 찾습니다.
+        //find 메소드는 배열을 반환하므로 [comment]로 결과를 배열 디스트럭처링합니다.
+        if (!comment) {
+            return res
+                .status(404)
+                .json({ errorMessage: '코멘트를 찾을 수 없습니다.' });
+        } //댓글이 존재하지 않는 경우 404 상태코드와 함께 실패 메시지를 반환
+        if (userId !== comment.UserId) {  //요청 본문에서 전달받은 userId와 댓글의 userId를 비교합니다.
+            return res
+                .status(400) 
+                .json({ errorMessage: '본인이 작성한 댓글만 수정할 수 있습니다.' });
+        }
+        if (!content) {
+            return res.status(404).json({ errorMessage: '코멘트를 입력해주세요.' });
+        }
+        await comment.update({ content });
+        res.status(200).json({ message: '댓글을 수정하였습니다.' });
+
+    } catch (err) {
+        res.status(500).json({ errorMessage: '댓글 수정에 실패했습니다.' });
+
+
+    }
+})
+
+// 댓글 삭제 api
+router.delete('/posts/:postId/comments/:commentId', authMiddleware, async (req, res) => {
+    try {
+        const { userId } = res.locals.user;
+        const { postId, commentId } = req.params;
+        const post = await Posts.findOne({ where: { postId } });
+        if (!post) {
+            return res
+                .status(404)
+                .json({ errorMessage: '게시글을 찾을 수 없습니다.' });
+        }
+        const comment = await Comments.findOne({ where: { commentId } });
+        if (!comment) {
+            return res
+                .status(404)
+                .json({ errorMessage: '코멘트를 찾을 수 없습니다.' });
+        }
+        if (userId !== comment.UserId) {
+            return res
+                .status(400)
+                .json({ errorMessage: '본인이 작성한 댓글만 삭제할 수 있습니다.' });
+        }
+
+        await Comments.destroy({
+            where: {
+                [Op.and]: [
+                    { commentId },
+                    { UserId: userId },
+                ],
+            },
+        });
+        res.status(200).json({ message: '댓글을 삭제하였습니다.' });
+    } catch (error) {
+        res.status(500).json({ errorMessage: '댓글 삭제에 실패했습니다.' });
+    }
+})
 
 module.exports = router;

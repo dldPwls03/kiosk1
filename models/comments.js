@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
       this.belongsTo(models.Posts, {
         targetKey: 'postId',
         foreignKey: 'PostId'
-      })
+      });
     }
   }
   Comments.init({
