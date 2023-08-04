@@ -1,6 +1,8 @@
 const express = require("express");
 const Posts = require("../schemas/post.js");
 const router = express.Router();
+const auth = require('../middlewares/auth');
+const jwt = require('jsonwebtoken');
 
 // 게시글 조회 API
 router.get("/", async (req, res) => {
